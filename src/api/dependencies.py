@@ -24,9 +24,16 @@ async def get_redis():
     global _redis
     if _redis is None:
         from src.infrastructure.redis import get_redis_client
+        from src.infrastructure.memory_store import InMemoryStore
         settings = get_settings()
-        _redis = get_redis_client()
-        await _redis.connect()
+        try:
+            _redis = get_redis_client()
+            await _redis.connect()
+        except Exception:
+            import structlog
+            structlog.get_logger(__name__).warning("redis_unavailable_falling_back_to_memory")
+            _redis = InMemoryStore()
+            await _redis.connect()
     return _redis
 
 
@@ -41,13 +48,19 @@ def get_llm():
 async def get_rag() -> Any:
     global _rag
     if _rag is None:
+        settings = get_settings()
+        llm = get_llm()
+        milvus = None
         try:
-            from src.rag.pipeline import RAGPipeline
-            settings = get_settings()
-            llm = get_llm()
             from src.infrastructure.milvus import get_milvus_client
             milvus = get_milvus_client()
             await milvus._ensure_connection()
+        except Exception:
+            import structlog
+            structlog.get_logger(__name__).warning("milvus_unavailable_using_bm25_only")
+
+        try:
+            from src.rag.pipeline import RAGPipeline
             _rag = RAGPipeline(
                 milvus_client=milvus,
                 llm_client=llm,

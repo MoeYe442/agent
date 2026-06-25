@@ -41,14 +41,27 @@ async def list_tasks() -> dict:
     """List all tasks (summary)."""
     executor = await get_workflow_executor()
     redis = executor._redis
-    if redis is None:
-        return {"tasks": []}
 
     tasks = []
-    # Scan for task keys
-    cursor = 0
-    while True:
-        cursor, keys = await redis.client.scan(cursor, match="task:*", count=100)
+    try:
+        # Try native Redis scan first
+        cursor = 0
+        while True:
+            cursor, keys = await redis.client.scan(cursor, match="task:*", count=100)
+            for key in keys:
+                data = await redis.get_json(key)
+                if data:
+                    tasks.append({
+                        "task_id": data.get("task_id", ""),
+                        "status": data.get("status", ""),
+                        "query": data.get("spec", {}).get("query", "")[:100] if isinstance(data.get("spec"), dict) else "",
+                        "created_at": data.get("created_at", ""),
+                    })
+            if cursor == 0:
+                break
+    except AttributeError:
+        # InMemoryStore fallback
+        keys = await redis.keys("task:*")
         for key in keys:
             data = await redis.get_json(key)
             if data:
@@ -58,7 +71,5 @@ async def list_tasks() -> dict:
                     "query": data.get("spec", {}).get("query", "")[:100] if isinstance(data.get("spec"), dict) else "",
                     "created_at": data.get("created_at", ""),
                 })
-        if cursor == 0:
-            break
 
     return {"tasks": tasks}

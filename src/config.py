@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     llm_api_base: str = "https://api.openai.com/v1"
     llm_api_key: str = ""
     llm_model: str = "gpt-4o"
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    embedding_dim: int = 384
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dim: int = 1536
     sandbox_docker: bool = False
     max_retries: int = 2
     context_compress_threshold: int = 32000

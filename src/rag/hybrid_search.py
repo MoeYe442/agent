@@ -44,27 +44,28 @@ async def hybrid_search(
         for chunk, score in bm25_index.search(query.query_text, top_k=fetch_k):
             bm25_results[chunk.chunk_id] = (chunk, score)
 
-    # Vector search
+    # Vector search (skip when Milvus is unavailable)
     vector_results: dict[str, float] = {}
-    try:
-        query_vector = await asyncio.to_thread(llm_client.embed, [query.query_text])
-        if query_vector:
-            hits = await asyncio.to_thread(
-                milvus_client.search,
-                collection_name,
-                list(query_vector[0]),
-                fetch_k,
-                query.filters,
-            )
-            for hit in hits:
-                chunk_id = hit.get("id", "")
-                score = hit.get("score", hit.get("distance", 0.0))
-                # Normalize cosine distance to similarity
-                if "distance" in hit:
-                    score = 1.0 - score
-                vector_results[chunk_id] = float(score)
-    except Exception as exc:
-        logger.warning("vector_search_failed", error=str(exc))
+    if milvus_client is not None:
+        try:
+            query_vector = await asyncio.to_thread(llm_client.embed, [query.query_text])
+            if query_vector:
+                hits = await asyncio.to_thread(
+                    milvus_client.search,
+                    collection_name,
+                    list(query_vector[0]),
+                    fetch_k,
+                    query.filters,
+                )
+                for hit in hits:
+                    chunk_id = hit.get("id", "")
+                    score = hit.get("score", hit.get("distance", 0.0))
+                    # Normalize cosine distance to similarity
+                    if "distance" in hit:
+                        score = 1.0 - score
+                    vector_results[chunk_id] = float(score)
+        except Exception as exc:
+            logger.warning("vector_search_failed", error=str(exc))
 
     # Weighted fusion
     fused: dict[str, tuple[RagChunk, float, float | None, float | None]] = {}

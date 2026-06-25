@@ -15,14 +15,18 @@ logger = structlog.get_logger(__name__)
 
 
 class RAGPipeline:
-    """High-level RAG pipeline combining chunking, indexing, and hybrid search."""
+    """High-level RAG pipeline combining chunking, indexing, and hybrid search.
+
+    Works with or without Milvus. When milvus_client is None, operates in
+    BM25-only mode (alpha forced to 1.0).
+    """
 
     def __init__(
         self,
         milvus_client: Any,
         llm_client: Any,
         collection_name: str = "code_research",
-        embedding_dim: int = 384,
+        embedding_dim: int = 1536,
     ) -> None:
         self._milvus = milvus_client
         self._llm = llm_client
@@ -62,7 +66,12 @@ class RAGPipeline:
         filters: dict | None = None,
         rerank: bool = True,
     ) -> list[RetrievalResult]:
-        """Search the RAG pipeline with hybrid retrieval and optional reranking."""
+        """Search the RAG pipeline with hybrid retrieval and optional reranking.
+
+        When Milvus is unavailable, forces alpha=1.0 (BM25-only).
+        """
+        if self._milvus is None:
+            alpha = 1.0  # BM25-only
         sq = SearchQuery(
             query_text=query,
             top_k=top_k,
@@ -82,15 +91,20 @@ class RAGPipeline:
         return results
 
     async def _ingest_chunks(self, chunks: list[RagChunk]) -> int:
-        """Index chunks into Milvus and BM25."""
+        """Index chunks into Milvus and BM25.
+
+        When Milvus is unavailable, only builds the BM25 index.
+        """
         if not chunks:
             return 0
 
-        n = await index_chunks(chunks, self._milvus, self._llm, self._collection, self._embedding_dim)
-        if n > 0:
-            self._chunked.extend(chunks)
-            self._bm25.build(self._chunked)
-        return n
+        self._chunked.extend(chunks)
+        self._bm25.build(self._chunked)
+
+        if self._milvus is not None:
+            await index_chunks(chunks, self._milvus, self._llm, self._collection, self._embedding_dim)
+
+        return len(chunks)
 
     @property
     def chunk_count(self) -> int:

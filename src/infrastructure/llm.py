@@ -93,6 +93,7 @@ class LLMClient:
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
+        temperature: float = 0.1,
     ) -> AsyncIterator[dict]:
         """Streaming chat completion. Yields individual delta chunks."""
         if self._async_client is None:
@@ -105,6 +106,7 @@ class LLMClient:
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
+            "temperature": temperature,
             "stream": True,
         }
         if tools:

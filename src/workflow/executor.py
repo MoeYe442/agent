@@ -25,18 +25,19 @@ class WorkflowExecutor:
         redis_client: Any = None,
         rag_pipeline: Any = None,
     ) -> None:
+        from src.infrastructure.memory_store import InMemoryStore
         self._llm = llm_client
-        self._redis = redis_client
+        self._redis = redis_client or InMemoryStore()
         self._rag = rag_pipeline
         self._active_runs: dict[str, asyncio.Task] = {}
         self._cancel_events: dict[str, asyncio.Event] = {}
 
-    async def run(self, task_spec: TaskSpec) -> TaskRecord:
+    async def run(self, task_spec: TaskSpec, task_id_override: str = "") -> TaskRecord:
         """Execute a workflow for the given TaskSpec.
 
         Returns a TaskRecord with the final status.
         """
-        task_id = uuid.uuid4().hex
+        task_id = task_id_override or uuid.uuid4().hex
         task_record = TaskRecord(
             task_id=task_id,
             spec=task_spec,
@@ -64,9 +65,7 @@ class WorkflowExecutor:
         return False
 
     async def get_task(self, task_id: str) -> TaskRecord | None:
-        """Retrieve a task record from Redis."""
-        if self._redis is None:
-            return None
+        """Retrieve a task record from the store."""
         data = await self._redis.get_json(f"task:{task_id}")
         if data is None:
             return None
@@ -102,10 +101,27 @@ class WorkflowExecutor:
                 except Exception as exc:
                     logger.warning("project_index_failed", error=str(exc))
 
+            # Build BM25-only RAG pipeline if no RAG but repo available
+            rag = self._rag
+            if rag is None and repo_path:
+                from pathlib import Path
+                from src.rag.pipeline import RAGPipeline
+                try:
+                    rag = RAGPipeline(
+                        milvus_client=None,
+                        llm_client=self._llm,
+                    )
+                    py_files = list(Path(repo_path).rglob("*.py"))
+                    # Limit to avoid overwhelming context
+                    await rag.ingest_files([str(f) for f in py_files[:500]])
+                    logger.info("bm25_index_built", repo=repo_path, files=min(len(py_files), 500))
+                except Exception as exc:
+                    logger.warning("bm25_build_failed", error=str(exc))
+
             # Compile and run
             compiled = compile_workflow(
                 self._llm,
-                self._rag,
+                rag,
                 repo_path,
                 project_index,
             )
@@ -120,7 +136,7 @@ class WorkflowExecutor:
                 "findings": [],
                 "tool_log": [],
                 "evidence": [],
-                "project_index": None,
+                "project_index": project_index.model_dump() if project_index else None,
                 "review_score": None,
                 "review_retries": 0,
                 "final_report": None,
@@ -180,8 +196,7 @@ class WorkflowExecutor:
             self._cancel_events.pop(task_id, None)
 
     async def _persist_task(self, record: TaskRecord) -> None:
-        if self._redis is not None:
-            await self._redis.set_json(f"task:{record.task_id}", record.model_dump())
+        await self._redis.set_json(f"task:{record.task_id}", record.model_dump())
 
     async def _update_task_status(
         self,
@@ -190,8 +205,6 @@ class WorkflowExecutor:
         error: str = "",
         result_summary: str = "",
     ) -> None:
-        if self._redis is None:
-            return
         data = await self._redis.get_json(f"task:{task_id}")
         if data:
             record = TaskRecord(**data)
@@ -206,9 +219,8 @@ class WorkflowExecutor:
             await self._redis.set_json(f"task:{task_id}", record.model_dump())
 
     async def _publish_event(self, task_id: str, event_type: str, payload: dict) -> None:
-        if self._redis is not None:
-            try:
-                event = {"event": event_type, "task_id": task_id, "timestamp": datetime.utcnow().isoformat(), **payload}
-                await self._redis.publish(f"task_events:{task_id}", json.dumps(event, default=str))
-            except Exception as exc:
-                logger.warning("pubsub_failed", error=str(exc))
+        try:
+            event = {"event": event_type, "task_id": task_id, "timestamp": datetime.utcnow().isoformat(), **payload}
+            await self._redis.publish(f"task_events:{task_id}", json.dumps(event, default=str))
+        except Exception as exc:
+            logger.warning("pubsub_failed", error=str(exc))

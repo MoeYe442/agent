@@ -16,14 +16,14 @@ logger = structlog.get_logger(__name__)
 
 REPORTER_SYSTEM_PROMPT = """You are a technical report writer. Your job is to synthesize all research findings into a comprehensive analysis report.
 
-The report must have exactly these 7 sections in order:
-1. Project Overview - summary from README and directory structure
-2. Tech Stack Identification - languages, frameworks, and tools discovered
-3. Core Architecture - module organization and key abstractions
-4. Key Code Paths - critical functions and call chains
-5. Business Logic / Data Flow - how data moves through the system
-6. Dependencies and Risks - external dependencies and potential issues
-7. Evidence Citations - all evidence items with source references
+The report must have at least 3 sections. Recommended sections include:
+- Project Overview - summary from README and directory structure
+- Tech Stack Identification - languages, frameworks, and tools discovered
+- Core Architecture - module organization and key abstractions
+- Key Code Paths - critical functions and call chains
+- Business Logic / Data Flow - how data moves through the system
+- Dependencies and Risks - external dependencies and potential issues
+- Evidence Citations - all evidence items with source references
 
 For every claim you make, cite the evidence by its evidence_id.
 
@@ -98,7 +98,7 @@ All Findings:
 Evidence Items ({len(evidence_summary)} total):
 {json.dumps(evidence_summary, default=str, indent=2)[:4000]}
 
-Please produce the final analysis report with all 7 sections. Cite evidence items by their ID."""
+Please produce the final analysis report with at least 3 sections. Cite evidence items by their ID."""
 
     messages = [
         {"role": "system", "content": REPORTER_SYSTEM_PROMPT},

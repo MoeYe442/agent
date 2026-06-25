@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -33,10 +34,12 @@ class TaskManager:
 
     async def enqueue(self, task_spec: TaskSpec) -> str:
         """Enqueue a task for processing. Returns task_id."""
+        task_id = uuid.uuid4().hex[:16]
         task_data = task_spec.model_dump()
-        await self._redis.rpush(self._queue_key, json.dumps(task_data, default=str))
-        logger.info("task_enqueued", queue=self._queue_key)
-        return "queued"
+        payload = json.dumps({"task_id": task_id, "spec": task_data}, default=str)
+        await self._redis.rpush(self._queue_key, payload)
+        logger.info("task_enqueued", queue=self._queue_key, task_id=task_id)
+        return task_id
 
     async def start_worker(self, concurrency: int = 2) -> None:
         """Start background workers."""
@@ -82,17 +85,21 @@ class TaskManager:
                     continue
 
                 try:
-                    task_data = json.loads(task_json)
-                    spec = TaskSpec(**task_data)
+                    payload = json.loads(task_json)
+                    task_id = payload.get("task_id", "")
+                    spec_data = payload.get("spec", payload)
+                    spec = TaskSpec(**spec_data)
                 except Exception as exc:
                     logger.error("task_parse_failed", error=str(exc))
+                    await self._redis.lrem(self._processing_key, 1, task_json)
                     continue
 
-                logger.info("task_dequeued", query=spec.query[:80])
-                record = await self._executor.run(spec)
-
-                # Remove from processing queue
-                await self._redis.lrem(self._processing_key, 1, task_json)
+                logger.info("task_dequeued", query=spec.query[:80], task_id=task_id)
+                try:
+                    record = await self._executor.run(spec, task_id_override=task_id)
+                finally:
+                    # Remove from processing queue
+                    await self._redis.lrem(self._processing_key, 1, task_json)
 
             except asyncio.CancelledError:
                 raise
