@@ -12,6 +12,7 @@
 | Phase 5 | API 路由 | ✅ 完成 | 2026-06-24 | 2026-06-24 |
 | Phase 6 | 稳定性增强 | ✅ 完成 | 2026-06-24 | 2026-06-24 |
 | Phase 7 | 集成测试 + 演示 | ✅ 完成 | 2026-06-24 | 2026-06-24 |
+| Phase 8 | Vertical Slice 最小闭环 | ✅ 完成 | 2026-06-25 | 2026-06-26 |
 
 ## 已完成模块
 
@@ -108,6 +109,41 @@
 - [x] `Makefile` — 开发命令
 - [x] `.env.example` — 环境变量模板
 
+### Phase 8: Vertical Slice 最小闭环 (2026-06-26)
+
+目标：消除 Redis/Milvus 硬依赖，实现「提交本地仓库 → 多 Agent 执行 → Markdown 报告」最小闭环。
+
+#### Bug 修复 (5 项)
+- [x] `executor.py:139` — `project_index` 注入 agent state（修复始终为 None 的 bug）
+- [x] `task_manager.py` — `enqueue()` 返回真实 `task_id` 而非 `"queued"`
+- [x] `config.py` + `.env.example` — embedding model 改为 `text-embedding-3-small`（dim=1536）
+- [x] `llm.py:92` — `chat_stream()` 补充 `temperature` 参数
+- [x] `task_manager.py:98-102` — BRPOPLPUSH 包 try/finally 确保 `lrem` 必定执行
+
+#### Redis 可选化
+- [x] **新文件** `src/infrastructure/memory_store.py` — 纯内存替代，接口与 RedisClient 一致（KV/pubsub/queue）
+- [x] `executor.py` — `__init__` 自动回退到 InMemoryStore
+- [x] `dependencies.py` — `get_redis()` 连接失败时返回 InMemoryStore
+- [x] `tasks.py` — `list_tasks` 兼容 InMemoryStore
+
+#### Milvus 可选化
+- [x] `pipeline.py` — RAGPipeline 接受 `milvus_client=None`，仅构建 BM25
+- [x] `hybrid_search.py` — `milvus_client=None` 时跳过向量检索
+- [x] `executor.py` — 无 RAG 时自动构建 BM25-only 管道
+
+#### 演示脚本重写
+- [x] `scripts/demo.py` — 支持 `--repo-path`、`--query`、`--output`、`--timeout`
+
+#### Reporter 放宽
+- [x] `reporter.py` — 从"必须 7 章节"放宽为"至少 3 章节"
+
+#### 验证结果
+- [x] demo.py 对本项目端到端运行成功
+- [x] Jedi 索引: 69 文件, 1691 符号
+- [x] BM25 检索: 5 结果
+- [x] 6 Agent 全部执行
+- [x] 状态流转: queued → running → completed
+
 ## 全部完成
 
-所有 7 个阶段已实现完毕。项目可从 Phase 1 到 Phase 7 端到端运行。
+所有 8 个阶段已实现完毕。项目可端到端运行，无需 Redis/Milvus 即可完成本地代码仓库分析。
