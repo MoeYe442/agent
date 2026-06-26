@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
 import structlog
@@ -12,6 +13,57 @@ from src.tools.registry import execute_tool, get_tool_schemas
 logger = structlog.get_logger(__name__)
 
 MAX_TOOL_ROUNDS = 5
+
+# DeepSeek DSML format: <DSML|tool_calls> / <DSML｜tool_calls>
+# The separator can be ASCII pipe | or full-width vertical bar ｜(U+FF5C)
+_DSML_SEP = r"[|\uFF5C]"
+_DSML_TOOL_CALLS = re.compile(
+    rf"<\s*DSML{_DSML_SEP}tool_calls\s*>(.*?)<\s*/\s*DSML{_DSML_SEP}tool_calls\s*>",
+    re.DOTALL,
+)
+_DSML_INVOKE = re.compile(
+    rf"<\s*DSML{_DSML_SEP}invoke\s+name\s*=\s*\"([^\"]+)\"\s*>(.*?)<\s*/\s*DSML{_DSML_SEP}invoke\s*>",
+    re.DOTALL,
+)
+_DSML_PARAM = re.compile(
+    rf"<\s*DSML{_DSML_SEP}parameter\s+name\s*=\s*\"([^\"]+)\"\s+string\s*=\s*\"([^\"]+)\"\s*>(.*?)<\s*/\s*DSML{_DSML_SEP}parameter\s*>",
+    re.DOTALL,
+)
+
+
+def _parse_dsml_tool_calls(content: str) -> tuple[str, list[dict]]:
+    """Extract DSML-format tool calls from LLM content.
+
+    Returns (clean_content, tool_calls) where clean_content strips DSML blocks,
+    and tool_calls are converted to OpenAI-compatible format.
+    """
+    match = _DSML_TOOL_CALLS.search(content)
+    if not match:
+        return content, []
+
+    clean = _DSML_TOOL_CALLS.sub("", content).strip()
+
+    invokes = _DSML_INVOKE.findall(match.group(1))
+    tool_calls = []
+    for idx, (func_name, params_block) in enumerate(invokes):
+        params = _DSML_PARAM.findall(params_block)
+        arguments = {}
+        for p_name, is_string, value in params:
+            val = value.strip()
+            if is_string == "false":
+                try:
+                    val = json.loads(val)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            arguments[p_name] = val
+
+        tool_calls.append({
+            "id": f"dsml_{idx}",
+            "type": "function",
+            "function": {"name": func_name, "arguments": json.dumps(arguments)},
+        })
+
+    return clean, tool_calls
 
 
 def estimate_tokens(text: str) -> int:
@@ -56,15 +108,17 @@ async def call_llm_with_tools(
 ) -> dict:
     """Call LLM with tool-calling loop. Returns final assistant message dict.
 
-    The LLM can call tools and receive results for up to max_rounds iterations.
+    When tool_schemas is None, DSML tool calls in content are stripped rather
+    than executed (planner/reviewer/reporter expect JSON output).
     """
     current_messages = list(messages)
+    wants_tools = tool_schemas is not None
     tools = tool_schemas or get_tool_schemas()
 
     for round_num in range(max_rounds):
         try:
             response = await asyncio.to_thread(
-                llm_client.chat, current_messages, tools if tools else None, temperature
+                llm_client.chat, current_messages, tools if wants_tools else None, temperature
             )
         except Exception as exc:
             logger.error("llm_call_failed", round=round_num, error=str(exc))
@@ -76,10 +130,21 @@ async def call_llm_with_tools(
         choice = response.get("choices", [{}])[0]
         message = choice.get("message", {})
 
-        # Check for tool calls
-        tool_calls = message.get("tool_calls", [])
+        # Check for native tool calls
+        tool_calls = message.get("tool_calls") or []
         if not tool_calls:
-            return message
+            # Fallback: parse DSML tool calls from content (DeepSeek format)
+            content = message.get("content", "")
+            clean_content, dsml_calls = _parse_dsml_tool_calls(content)
+            if dsml_calls and wants_tools:
+                # Agent wants tools: parse DSML, execute them
+                message = {**message, "content": clean_content, "tool_calls": dsml_calls}
+                tool_calls = dsml_calls
+            else:
+                # Agent doesn't want tools (or no DSML): strip DSML, return clean content
+                if clean_content != content:
+                    message = {**message, "content": clean_content}
+                return message
 
         # Append assistant message
         current_messages.append(message)
@@ -107,6 +172,12 @@ async def call_llm_with_tools(
         final = await asyncio.to_thread(
             llm_client.chat, current_messages, None, temperature
         )
-        return final.get("choices", [{}])[0].get("message", {"role": "assistant", "content": ""})
+        msg = final.get("choices", [{}])[0].get("message", {"role": "assistant", "content": ""})
+        # Strip any DSML from the final message content
+        content = msg.get("content", "")
+        clean, _ = _parse_dsml_tool_calls(content)
+        if clean != content:
+            msg = {**msg, "content": clean}
+        return msg
     except Exception:
         return {"role": "assistant", "content": "Max tool rounds reached without final response."}

@@ -27,14 +27,19 @@ class LLMClient:
         embedding_model: str,
         max_retries: int = 2,
     ) -> None:
+        if not api_key or not api_key.strip():
+            raise ValueError(
+                "LLM_API_KEY is empty or not set. "
+                "Set it in your .env file or environment variables."
+            )
         self._api_base = api_base.rstrip("/")
-        self._api_key = api_key
+        self._api_key = api_key.strip()
         self._model = model
         self._embedding_model = embedding_model
         self._max_retries = max_retries
 
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
         self._client = httpx.Client(
@@ -189,12 +194,16 @@ class LLMClient:
 # ------------------------------------------------------------------
 
 
-def get_llm_client() -> LLMClient:  # noqa: D103
+def get_llm_client(
+    api_key: str | None = None,
+    api_base: str | None = None,
+    model: str | None = None,
+) -> LLMClient:  # noqa: D103
     settings = Settings()
     return LLMClient(
-        api_base=settings.llm_api_base,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
+        api_base=api_base or settings.llm_api_base,
+        api_key=api_key or settings.llm_api_key,
+        model=model or settings.llm_model,
         embedding_model=settings.embedding_model,
         max_retries=settings.max_retries,
     )

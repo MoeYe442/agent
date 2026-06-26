@@ -13,6 +13,7 @@
 | Phase 6 | 稳定性增强 | ✅ 完成 | 2026-06-24 | 2026-06-24 |
 | Phase 7 | 集成测试 + 演示 | ✅ 完成 | 2026-06-24 | 2026-06-24 |
 | Phase 8 | Vertical Slice 最小闭环 | ✅ 完成 | 2026-06-25 | 2026-06-26 |
+| Phase 9 | Bug 修复 + 方案文档升级 | ✅ 完成 | 2026-06-26 | 2026-06-26 |
 
 ## 已完成模块
 
@@ -98,7 +99,7 @@
 - [x] `README.md`
 
 ### 文档 (2/2 文件)
-- [x] `docs/SOLUTION.md` — 方案文档
+- [x] `docs/SOLUTION.md` — 方案文档（2026-06-26 升级为 744 行完整科研演示增强设计）
 - [x] `docs/PROGRESS.md` — 进度文档
 
 ## 项目配置
@@ -146,4 +147,47 @@
 
 ## 全部完成
 
-所有 8 个阶段已实现完毕。项目可端到端运行，无需 Redis/Milvus 即可完成本地代码仓库分析。
+所有 9 个阶段已实现完毕。项目可端到端运行，无需 Redis/Milvus 即可完成本地代码仓库分析。
+
+---
+
+### Phase 9: Bug 修复 + 方案文档升级 (2026-06-26)
+
+#### Bug 修复
+- [x] `llm.py:30-34` — 空 API key 时提前校验，抛出明确 `ValueError`，修复 `Illegal header value b'Bearer '` 错误
+
+#### 方案文档升级 (`docs/SOLUTION.md`)
+- [x] **第 9 节重写** — 8 大增强方向从简要描述扩展为完整科研设计方案：
+  - `9.1` 评测闭环 — 三级评测集 (L1/L2/L3) + 8 项指标 + 标准问题设计 + 目标基线
+  - `9.2` Agent 角色契约 — 每个 Agent 7 列契约表 + Reviewer 5 维审核逻辑
+  - `9.3` 证据链可信度 — 结构化 JSON 证据字段 + 6 级来源置信度 + 衰减/增强因子
+  - `9.4` 上下文压缩 — 4 类结构化记忆 (Task/Evidence/Failure/Plan) + 量化效果预期
+  - `9.5` 工具安全与沙箱 — 三级权限体系 + Executor 命令白名单 + 审计架构
+  - `9.6` 模型路由与成本控制 — ModelRouter + 降级链路 + 成本追踪
+  - `9.7` 前端演示控制台 — 四面板布局 + 技术栈选型
+  - `9.8` 可复现实验配置 — Run Manifest JSON + 复现命令 + 参数扫描实验表格
+- [x] **新增第 10 节** — 两阶段实施路线图 + 最终项目定位声明
+
+---
+
+## 下一阶段规划
+
+基于 SOLUTION.md 第 10 节的实施路线图：
+
+### 第一阶段：核心竞争力
+
+| 优先级 | 模块 | 预计文件 | 说明 |
+|--------|------|----------|------|
+| P0 | Agent 角色契约 | `src/models/contract.py`、`src/agents/contracts/*.py` | `AgentContract` 数据模型 + 6 个 Agent 契约实现 |
+| P0 | 证据链可信度 | `src/models/evidence.py`（扩展）、`src/evaluation/confidence.py` | 置信度计算器 + 报告中的证据可视化 |
+| P1 | 上下文压缩 | `src/workflow/memory.py` | 4 类结构化 Memory + 压缩触发逻辑 |
+| P1 | 评测闭环 | `src/evaluation/` 模块 | 评测集 + 指标计算 + 基准报告生成 |
+
+### 第二阶段：展示与工程深度
+
+| 优先级 | 模块 | 预计文件 | 说明 |
+|--------|------|----------|------|
+| P2 | 前端演示控制台 | `console/` | React SPA + SSE 实时更新 |
+| P2 | 模型路由 | `src/infrastructure/model_router.py` | ModelRouter + 降级链路 + 成本追踪 |
+| P3 | 工具沙箱 | `src/tools/safety_gate.py` | ToolSafetyGate + 三级权限 + 审计日志 |
+| P3 | 可复现实验 | `scripts/reproduce.py` + `src/models/manifest.py` | RunManifest + 复现 + 对比脚本 |

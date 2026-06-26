@@ -76,6 +76,24 @@ async def main():
         default=600,
         help="Max seconds to wait for task completion",
     )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="LLM API key (falls back to LLM_API_KEY env var or .env file)",
+    )
+    parser.add_argument(
+        "--api-base",
+        type=str,
+        default=None,
+        help="LLM API base URL (default: https://api.openai.com/v1)",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="LLM model name (default: gpt-4o)",
+    )
     args = parser.parse_args()
 
     repo_path = args.repo_path or str(Path(__file__).parent.parent.resolve())
@@ -92,7 +110,11 @@ async def main():
 
     # Initialize clients (no Redis/Milvus needed)
     print("Initializing...")
-    llm = get_llm_client()
+    llm = get_llm_client(
+        api_key=args.api_key,
+        api_base=args.api_base,
+        model=args.model,
+    )
     store = InMemoryStore()
     await store.connect()
 
