@@ -119,3 +119,153 @@ class TestEvidenceItemExtended:
             confidence_summary={"code_file": 0.90, "web_page": 0.45},
         )
         assert chain_with_summary.confidence_summary == {"code_file": 0.90, "web_page": 0.45}
+
+
+def _make_test_agent(**contract_kwargs):
+    """Helper to create a minimal BaseAgent subclass with a specific contract."""
+    from src.agents.base import BaseAgent
+    from src.models.contract import AgentContract
+    from src.models.enums import AgentRole
+
+    defaults = {
+        "agent_role": AgentRole.PLANNER,
+        "description": "test",
+        "input_schema": [],
+        "output_schema": [],
+        "allowed_tools": [],
+        "forbidden_actions": [],
+        "failure_conditions": [],
+        "fallback_behavior": "skip",
+    }
+    defaults.update(contract_kwargs)
+
+    class _TestAgent(BaseAgent):
+        contract = AgentContract(**defaults)
+
+        async def _run(self, state):
+            return {"phase": "done"}
+
+    return _TestAgent(llm_client=None)
+
+
+class TestBaseAgentValidation:
+    """Tests for BaseAgent template-method validation logic."""
+
+    def test_validate_input_missing_field(self):
+        """_validate_input adds error when input_schema field is missing."""
+        from src.models.enums import AgentRole
+
+        agent = _make_test_agent(
+            agent_role=AgentRole.PLANNER,
+            input_schema=["required_field"],
+        )
+        state = {"other_field": "value", "errors": []}
+        errors = []
+        agent._validate_input(state, errors)
+        assert len(errors) == 1
+        assert "required_field" in errors[0]
+
+    def test_validate_input_field_present(self):
+        """_validate_input adds no error when input_schema field is present."""
+        from src.models.enums import AgentRole
+
+        agent = _make_test_agent(
+            agent_role=AgentRole.PLANNER,
+            input_schema=["required_field"],
+        )
+        state = {"required_field": "hello", "errors": []}
+        errors = []
+        agent._validate_input(state, errors)
+        assert len(errors) == 0
+
+    def test_validate_output_missing_field(self):
+        """_validate_output adds error when output_schema field is missing."""
+        from src.models.enums import AgentRole
+
+        agent = _make_test_agent(
+            agent_role=AgentRole.PLANNER,
+            output_schema=["plan"],
+        )
+        result = {"other": "value"}
+        errors = []
+        agent._validate_output(result, errors)
+        assert len(errors) == 1
+        assert "plan" in errors[0]
+
+    def test_validate_output_field_present(self):
+        """_validate_output adds no error when output_schema field is present."""
+        from src.models.enums import AgentRole
+
+        agent = _make_test_agent(
+            agent_role=AgentRole.PLANNER,
+            output_schema=["plan"],
+        )
+        result = {"plan": [{"step": 1}]}
+        errors = []
+        agent._validate_output(result, errors)
+        assert len(errors) == 0
+
+    @pytest.mark.asyncio
+    async def test_execute_calls_validate_and_run(self):
+        """execute() calls _validate_input, _run, _validate_output, _audit_tools, _check_quality_gate in order."""
+        from src.agents.base import BaseAgent
+        from src.models.contract import AgentContract
+        from src.models.enums import AgentRole
+
+        call_order = []
+
+        class OrderedAgent(BaseAgent):
+            contract = AgentContract(
+                agent_role=AgentRole.PLANNER,
+                description="test",
+                input_schema=[],
+                output_schema=[],
+                allowed_tools=[],
+                forbidden_actions=[],
+                failure_conditions=[],
+                fallback_behavior="skip",
+            )
+
+            def _validate_input(self, state, errors):
+                call_order.append("validate_input")
+
+            async def _run(self, state):
+                call_order.append("run")
+                return {"plan": []}
+
+            def _validate_output(self, result, errors):
+                call_order.append("validate_output")
+
+            def _audit_tools(self, result, state, errors):
+                call_order.append("audit_tools")
+
+            def _check_quality_gate(self, result):
+                call_order.append("quality_gate")
+
+        agent = OrderedAgent(llm_client=None)
+        result = await agent.execute({"errors": []})
+        assert call_order == ["validate_input", "run", "validate_output", "audit_tools", "quality_gate"]
+
+    def test_check_quality_gate_passes(self):
+        """_check_quality_gate returns True when result meets thresholds."""
+        from src.models.enums import AgentRole
+
+        agent = _make_test_agent(
+            agent_role=AgentRole.PLANNER,
+            quality_gate={"min_plan": 3},
+        )
+        result = {"plan": [1, 2, 3, 4]}  # len 4 >= 3
+        gate_result = agent._check_quality_gate(result)
+        assert gate_result is True
+
+    def test_check_quality_gate_fails(self):
+        """_check_quality_gate returns False when result fails threshold."""
+        from src.models.enums import AgentRole
+
+        agent = _make_test_agent(
+            agent_role=AgentRole.PLANNER,
+            quality_gate={"min_plan": 3},
+        )
+        result = {"plan": [1]}  # len 1 < 3
+        gate_result = agent._check_quality_gate(result)
+        assert gate_result is False

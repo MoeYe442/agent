@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from abc import ABC, abstractmethod
 from typing import Any
 
 import structlog
 
 from src.models.agent_state import AgentState
+from src.models.contract import AgentContract
 from src.tools.registry import execute_tool, get_tool_schemas
 
 logger = structlog.get_logger(__name__)
@@ -181,3 +183,124 @@ async def call_llm_with_tools(
         return msg
     except Exception:
         return {"role": "assistant", "content": "Max tool rounds reached without final response."}
+
+
+class BaseAgent(ABC):
+    """Abstract base class for all agents with contract-driven validation.
+
+    Subclasses define their contract and implement _run(). The execute()
+    method is a template method that validates input/output, audits tool
+    usage, and checks quality gates around the agent's core logic.
+    """
+
+    contract: AgentContract
+
+    def __init__(self, llm_client: Any, tool_registry: Any = None) -> None:
+        self.llm_client = llm_client
+        self.tool_registry = tool_registry
+
+    async def execute(self, state: AgentState) -> dict:
+        """Template method: validate, run, validate, audit, quality-gate."""
+        errors: list[str] = list(state.get("errors", []))
+
+        self._validate_input(state, errors)
+
+        result = await self._run(state)
+
+        self._validate_output(result, errors)
+        self._audit_tools(result, state, errors)
+        quality_passed = self._check_quality_gate(result)
+
+        if not quality_passed:
+            errors.append(
+                f"Quality gate not passed for {self.contract.agent_role.value}: "
+                f"{self.contract.quality_gate}"
+            )
+
+        if errors:
+            result["errors"] = errors
+        result["current_agent"] = self.contract.agent_role.value
+        return result
+
+    @abstractmethod
+    async def _run(self, state: AgentState) -> dict:
+        """Core agent logic. Subclasses must implement this."""
+        ...
+
+    def _validate_input(self, state: AgentState, errors: list[str]) -> None:
+        """Check that required input_schema fields exist in state."""
+        for field in self.contract.input_schema:
+            if field not in state or state.get(field) is None:
+                msg = (
+                    f"Agent '{self.contract.agent_role.value}': "
+                    f"required input field '{field}' missing or None in state"
+                )
+                logger.warning("contract_input_validation_failed", field=field, agent=self.contract.agent_role.value)
+                errors.append(msg)
+
+    def _validate_output(self, result: dict, errors: list[str]) -> None:
+        """Check that required output_schema fields exist in result."""
+        for field in self.contract.output_schema:
+            if field not in result:
+                msg = (
+                    f"Agent '{self.contract.agent_role.value}': "
+                    f"required output field '{field}' missing from result"
+                )
+                logger.warning("contract_output_validation_failed", field=field, agent=self.contract.agent_role.value)
+                errors.append(msg)
+
+    def _audit_tools(self, result: dict, state: AgentState, errors: list[str]) -> None:
+        """Check that any tools used are in the allowed_tools whitelist.
+
+        Scans tool_log for entries that appeared during this agent's run.
+        """
+        if not self.contract.allowed_tools:
+            return
+
+        allowed = set(self.contract.allowed_tools)
+        # Check tool_log from state - we scan recent entries
+        tool_log = state.get("tool_log", [])
+        for tc in tool_log[-20:]:
+            tc_dict = tc.model_dump() if hasattr(tc, "model_dump") else tc
+            tool_name = tc_dict.get("tool_name", "")
+            if tool_name and tool_name not in allowed:
+                msg = (
+                    f"Agent '{self.contract.agent_role.value}': "
+                    f"tool '{tool_name}' not in allowed_tools whitelist"
+                )
+                logger.warning("contract_tool_violation", tool=tool_name, agent=self.contract.agent_role.value)
+                if msg not in errors:
+                    errors.append(msg)
+
+    def _check_quality_gate(self, result: dict) -> bool:
+        """Check if result passes quality gate thresholds.
+
+        Quality gates use simple comparisons:
+        - "min_<field>": result[field] must have len() >= value
+        - "<field>_gte": result[field] must be >= value
+        """
+        if not self.contract.quality_gate:
+            return True
+
+        for key, threshold in self.contract.quality_gate.items():
+            if key.startswith("min_"):
+                field_name = key[4:]  # strip "min_" prefix
+                actual = result.get(field_name)
+                if actual is None:
+                    return False
+                if isinstance(actual, (list, str, dict)):
+                    if len(actual) < threshold:
+                        return False
+                else:
+                    if actual < threshold:
+                        return False
+            elif key.endswith("_gte"):
+                field_name = key[:-4]  # strip "_gte" suffix
+                actual = result.get(field_name)
+                if actual is None:
+                    return False
+                if isinstance(actual, (int, float)):
+                    if actual < threshold:
+                        return False
+
+        return True
