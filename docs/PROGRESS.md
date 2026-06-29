@@ -191,3 +191,49 @@
 | P2 | 模型路由 | `src/infrastructure/model_router.py` | ModelRouter + 降级链路 + 成本追踪 |
 | P3 | 工具沙箱 | `src/tools/safety_gate.py` | ToolSafetyGate + 三级权限 + 审计日志 |
 | P3 | 可复现实验 | `scripts/reproduce.py` + `src/models/manifest.py` | RunManifest + 复现 + 对比脚本 |
+
+---
+
+## Phase 10: P0 Agent 角色契约 + 证据链可信度 (2026-06-29)
+
+实施 SOLUTION.md 第一阶段核心竞争力中的 P0 模块。
+
+### 实施进度
+
+| 任务 | 内容 | 状态 | 提交 |
+|------|------|------|------|
+| Task 1 | AgentContract 数据模型 | ✅ 完成 | `b8e7881` |
+| Task 2 | EvidenceItem/EvidenceChain 扩展 | ✅ 完成 | `0266170` |
+| Task 3 | ConfidenceCalculator 规则引擎 | ✅ 完成 | `5e02efa` |
+| Task 4 | BaseAgent 抽象基类 | ✅ 完成 | `a1cf0e2` |
+| Task 5 | PlannerAgent 重构 | ✅ 完成 | `209d4dd` |
+| Task 6 | ResearcherAgent 重构 | 🔄 进行中 | — |
+| Task 7 | CodeReaderAgent 重构 | ⏳ 待开始 | — |
+| Task 8 | ExecutorAgent 重构 | ⏳ 待开始 | — |
+| Task 9 | ReviewerAgent 重构 | ⏳ 待开始 | — |
+| Task 10 | ReporterAgent 重构 | ⏳ 待开始 | — |
+| Task 11 | Workflow graph + executor 适配 | ⏳ 待开始 | — |
+| Task 12 | Conftest 更新 | ⏳ 待开始 | — |
+| Task 13 | Demo 端到端验证 | ⏳ 待开始 | — |
+| Task 14 | 契约 JSON 文件 | ⏳ 待开始 | — |
+
+### 已交付
+
+#### 新增文件
+- [x] `src/models/contract.py` — `AgentContract` Pydantic 模型（9 字段）
+- [x] `src/evaluation/__init__.py` — 模块入口
+- [x] `src/evaluation/confidence.py` — `ConfidenceCalculator` 规则引擎（6 来源类型基准分 + 衰减/增强因子）
+- [x] `tests/test_contracts.py` — 契约模型 + BaseAgent 验证测试（10 个测试）
+- [x] `tests/test_confidence.py` — 置信度计算器测试（8 个测试）
+- [x] `docs/superpowers/specs/2026-06-29-p0-agent-contracts-evidence-confidence-design.md` — 设计文档
+- [x] `docs/superpowers/plans/2026-06-29-p0-agent-contracts-evidence-confidence-plan.md` — 实施计划
+
+#### 修改文件
+- [x] `src/models/evidence.py` — `EvidenceItem` 新增 6 字段（line_range, confidence_score, collected_by, corroboration_count, cross_references, related_claim），`EvidenceChain` 新增 confidence_summary
+- [x] `src/agents/base.py` — 新增 `BaseAgent` 抽象基类（模板方法 execute + 4 步校验），保留原有 3 个工具函数
+- [x] `src/agents/planner.py` — 重构为 `PlannerAgent(BaseAgent)` + `PLANNER_CONTRACT`，保留向后兼容 `planner_node()` wrapper
+
+### 设计决策记录
+- Agent 契约校验采取"预警+记录"而非硬阻断
+- 置信度计算采取纯规则引擎（非 LLM）
+- 行号衰减仅对文件类来源类型生效（CODE_FILE、DOCUMENT、GITHUB_REPO、RAG_CHUNK）
