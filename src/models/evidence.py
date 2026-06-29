@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from src.models.enums import SourceType
+from src.models.enums import AgentRole, SourceType
 
 
 class EvidenceItem(BaseModel):
@@ -19,6 +19,13 @@ class EvidenceItem(BaseModel):
     agent_role: str = ""
     relevance_score: float = 0.0
     metadata: dict = Field(default_factory=dict)
+    # New fields for evidence confidence
+    line_range: tuple[int, int] | None = None
+    confidence_score: float | None = None
+    collected_by: AgentRole | None = None
+    corroboration_count: int = 0
+    cross_references: list[str] = Field(default_factory=list)
+    related_claim: str | None = None
 
 
 class EvidenceChain(BaseModel):
@@ -27,3 +34,4 @@ class EvidenceChain(BaseModel):
     relationships: list[tuple[str, str]] = Field(
         default_factory=list
     )  # (parent_id, child_id)
+    confidence_summary: dict | None = None
